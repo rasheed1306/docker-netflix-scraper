@@ -120,10 +120,10 @@ def get_null_rating_candidates() -> list[dict]:
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT tmdb_id, imdb_id FROM public.movies "
-                "WHERE rating IS NULL AND imdb_id IS NOT NULL"
+                "SELECT tmdb_id, rating FROM public.movies "
+                "WHERE rating IS NULL AND tmdb_id IS NOT NULL"
             )
-            return [{"tmdb_id": row[0], "imdb_id": row[1]} for row in cur.fetchall()]
+            return [{"tmdb_id": row[0], "rating": row[1]} for row in cur.fetchall()]
 
 
 @retry(
