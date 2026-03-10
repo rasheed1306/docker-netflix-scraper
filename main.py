@@ -17,7 +17,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MAX_PAGES = 1  # Stage 1: 1 page. Stage 2: 500 pages
+MAX_PAGES = 500  # Stage 1: 1 page. Stage 2: 500 pages
 
 
 async def enrich_movie(movie: Dict, existing_ids: set) -> Optional[Dict]:
@@ -135,30 +135,72 @@ async def process_page(page: int, min_date: Optional[str], existing_ids: set) ->
 
 
 async def backfill_ratings() -> None:
-    """
-    Query all rows with rating IS NULL and a known imdb_id, call OMDB concurrently,
-    and update any rows where a rating is now available.
-    """
-    candidates = db.get_null_rating_candidates()
+    candidates = db.get_null_candidates("rating")
     if not candidates:
         logger.info("No null-rating candidates to backfill.")
         return
 
     logger.info(f"Backfilling ratings for {len(candidates)} movies...")
+    sem = asyncio.Semaphore(10)
+    updates = []
 
-    async def try_backfill(candidate: dict) -> None:
-        tmdb_id = candidate["tmdb_id"]
-        imdb_id = candidate["imdb_id"]
+    async def try_fetch(c: dict) -> None:
+        async with sem:
+            try:
+                rating = await omdb.get_rating(c["imdb_id"])
+                if rating is not None:
+                    updates.append((rating, c["tmdb_id"]))
+            except Exception as e:
+                logger.warning(f"Rating backfill failed for tmdb_id={c['tmdb_id']}: {e}")
+
+    await asyncio.gather(*[try_fetch(c) for c in candidates])
+    db.batch_update("rating", updates)
+    logger.info(f"Rating backfill complete. Updated {len(updates)} movies.")
+
+
+async def backfill_embeddings() -> None:
+    candidates = db.get_null_candidates("embedding")
+    if not candidates:
+        logger.info("No null-embedding candidates to backfill.")
+        return
+
+    logger.info(f"Backfilling embeddings for {len(candidates)} movies...")
+    updates = []
+    for i in range(0, len(candidates), 20):
+        chunk = candidates[i:i + 20]
         try:
-            rating = await omdb.get_rating(imdb_id)
-            if rating is not None:
-                db.update_rating(tmdb_id, rating)
-                logger.info(f"Backfilled rating {rating} for tmdb_id={tmdb_id}")
+            vectors = embeddings.batch_embed([c.get("description") or "" for c in chunk])
+            updates.extend((v, c["tmdb_id"]) for c, v in zip(chunk, vectors))
         except Exception as e:
-            logger.warning(f"Backfill failed for tmdb_id={tmdb_id}: {e}")
+            logger.warning(f"Embedding backfill failed for chunk at {i}: {e}")
+    db.batch_update("embedding", updates)
+    logger.info(f"Embedding backfill complete. Updated {len(updates)} movies.")
 
-    await asyncio.gather(*[try_backfill(c) for c in candidates])
-    logger.info("Rating backfill pass complete.")
+
+async def backfill_trailers() -> None:
+    candidates = db.get_null_candidates("trailer_url")
+    if not candidates:
+        logger.info("No null-trailer candidates to backfill.")
+        return
+
+    logger.info(f"Backfilling trailers for {len(candidates)} movies...")
+    sem = asyncio.Semaphore(5)
+    updates = []
+
+    async def try_fetch(c: dict) -> None:
+        async with sem:
+            try:
+                url = await tmdb.get_videos(c["tmdb_id"])
+                if not url and c["title"] and c["release_year"]:
+                    url = await youtube.get_trailer(c["title"], c["release_year"])
+                if url:
+                    updates.append((url, c["tmdb_id"]))
+            except Exception as e:
+                logger.warning(f"Trailer backfill failed for tmdb_id={c['tmdb_id']}: {e}")
+
+    await asyncio.gather(*[try_fetch(c) for c in candidates])
+    db.batch_update("trailer_url", updates)
+    logger.info(f"Trailer backfill complete. Updated {len(updates)} movies.")
 
 
 async def run_scraper():
@@ -189,8 +231,10 @@ async def run_scraper():
         existing_ids = db.load_existing_tmdb_ids()
         logger.info(f"Loaded {len(existing_ids)} existing TMDB IDs")
 
-        # Backfill any movies that previously had no OMDB rating
+        # Backfill missing data for existing movies
         await backfill_ratings()
+        await backfill_embeddings()
+        await backfill_trailers()
 
         # Process pages
         for page in range(1, MAX_PAGES + 1):

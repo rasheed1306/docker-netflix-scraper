@@ -117,15 +117,23 @@ def upsert_movies(movies: list) -> None:
     wait=wait_exponential(multiplier=1, min=1, max=4),
     retry=retry_if_exception_type(psycopg.OperationalError)
 )
-def get_null_rating_candidates() -> list[dict]:
-    """Return all movies where rating is NULL and imdb_id is known."""
+def get_null_candidates(field: str) -> list[dict]:
+    """Return movies where the given field is NULL.
+    Returns tmdb_id + contextual columns needed for each backfill type.
+    """
+    queries = {
+        "rating": ("SELECT tmdb_id, imdb_id FROM public.movies WHERE rating IS NULL AND imdb_id IS NOT NULL",
+                   ["tmdb_id", "imdb_id"]),
+        "embedding": ("SELECT tmdb_id, description FROM public.movies WHERE embedding IS NULL",
+                      ["tmdb_id", "description"]),
+        "trailer_url": ("SELECT tmdb_id, title, release_year FROM public.movies WHERE trailer_url IS NULL",
+                        ["tmdb_id", "title", "release_year"]),
+    }
+    sql, cols = queries[field]
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT tmdb_id, imdb_id FROM public.movies "
-                "WHERE rating IS NULL AND imdb_id IS NOT NULL"
-            )
-            return [{"tmdb_id": row[0], "imdb_id": row[1]} for row in cur.fetchall()]
+            cur.execute(sql)
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 @retry(
@@ -133,13 +141,18 @@ def get_null_rating_candidates() -> list[dict]:
     wait=wait_exponential(multiplier=1, min=1, max=4),
     retry=retry_if_exception_type(psycopg.OperationalError)
 )
-def update_rating(tmdb_id: int, rating: float) -> None:
-    """Update the rating for a single movie by tmdb_id."""
+def batch_update(field: str, updates: list[tuple]) -> None:
+    """Batch update a single column. updates: list of (value, tmdb_id) tuples."""
+    if not updates:
+        return
+    allowed = {"rating", "embedding", "trailer_url"}
+    if field not in allowed:
+        raise ValueError(f"Cannot update field: {field}")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE public.movies SET rating = %s WHERE tmdb_id = %s",
-                (rating, tmdb_id)
+            cur.executemany(
+                f"UPDATE public.movies SET {field} = %s WHERE tmdb_id = %s",
+                updates
             )
             conn.commit()
 
