@@ -70,7 +70,7 @@ def upsert_movies(movies: list) -> None:
     except embedding (embedding is never overwritten on re-runs).
     
     movies: List of dicts with keys:
-        tmdb_id, title, description, poster_url, trailer_url, genre, runtime, rating, release_year, embedding
+        tmdb_id, title, description, poster_url, trailer_url, genre, runtime, rating, release_year, embedding, imdb_id
     """
     if not movies:
         return
@@ -81,8 +81,8 @@ def upsert_movies(movies: list) -> None:
                 cur.execute(
                     """
                     INSERT INTO public.movies 
-                    (tmdb_id, title, description, poster_url, trailer_url, genre, runtime, rating, release_year, embedding)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (tmdb_id, title, description, poster_url, trailer_url, genre, runtime, rating, release_year, embedding, imdb_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (tmdb_id) 
                     DO UPDATE SET
                         title = EXCLUDED.title,
@@ -92,7 +92,8 @@ def upsert_movies(movies: list) -> None:
                         genre = EXCLUDED.genre,
                         runtime = EXCLUDED.runtime,
                         rating = EXCLUDED.rating,
-                        release_year = EXCLUDED.release_year
+                        release_year = EXCLUDED.release_year,
+                        imdb_id = COALESCE(public.movies.imdb_id, EXCLUDED.imdb_id)
                     """,
                     (
                         movie.get("tmdb_id"),
@@ -105,6 +106,7 @@ def upsert_movies(movies: list) -> None:
                         movie.get("rating"),
                         movie.get("release_year"),
                         movie.get("embedding"),
+                        movie.get("imdb_id"),
                     )
                 )
             conn.commit()
@@ -120,10 +122,10 @@ def get_null_rating_candidates() -> list[dict]:
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT tmdb_id, rating FROM public.movies "
-                "WHERE rating IS NULL AND tmdb_id IS NOT NULL"
+                "SELECT tmdb_id, imdb_id FROM public.movies "
+                "WHERE rating IS NULL AND imdb_id IS NOT NULL"
             )
-            return [{"tmdb_id": row[0], "rating": row[1]} for row in cur.fetchall()]
+            return [{"tmdb_id": row[0], "imdb_id": row[1]} for row in cur.fetchall()]
 
 
 @retry(
