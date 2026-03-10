@@ -1,0 +1,17 @@
+version: '3.9'
+
+services:
+  ingestion:
+    build: .
+    container_name: netflix-scraper
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./src:/app/src
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
