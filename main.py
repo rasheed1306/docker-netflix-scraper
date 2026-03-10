@@ -109,7 +109,8 @@ async def process_page(page: int, min_date: Optional[str], existing_ids: set) ->
             movie["embedding"] = embedding
         logger.info(f"Generated embeddings for {len(enriched_movies)} movies")
     except Exception as e:
-        logger.error(f"Error generating embeddings: {e}")
+        logger.error(f"Error generating embeddings (skipping upsert for this page): {e}")
+        return [], 0
     
     # Upsert to database
     try:
