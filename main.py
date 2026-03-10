@@ -41,11 +41,7 @@ async def enrich_movie(movie: Dict, existing_ids: set) -> Optional[Dict]:
     release_year = int(release_date_str[:4]) if release_date_str else None
     
     try:
-        # Step 1: Fetch detail and videos concurrently
-        detail, videos = await asyncio.gather(
-            tmdb.get_detail(tmdb_id),
-            tmdb.get_videos(tmdb_id)
-        )
+        detail = await tmdb.get_detail(tmdb_id)
     except Exception as e:
         logger.error(f"Error enriching movie {tmdb_id} ({title}): {e}")
         return None
@@ -60,13 +56,7 @@ async def enrich_movie(movie: Dict, existing_ids: set) -> Optional[Dict]:
         except Exception as e:
             logger.warning(f"OMDB failed for {tmdb_id} ({title}): {e}")
 
-    # Step 2b: Fallback trailer if TMDB has none
-    trailer_url = videos
-    if not trailer_url and title and release_year:
-        try:
-            trailer_url = await youtube.get_trailer(title, release_year)
-        except Exception as e:
-            logger.warning(f"YouTube fallback failed for {tmdb_id} ({title}): {e}")
+    trailer_url = youtube.get_search_url(title, release_year) if title and release_year else None
 
     return {
         "tmdb_id": tmdb_id,
@@ -184,21 +174,12 @@ async def backfill_trailers() -> None:
         return
 
     logger.info(f"Backfilling trailers for {len(candidates)} movies...")
-    sem = asyncio.Semaphore(5)
     updates = []
-
-    async def try_fetch(c: dict) -> None:
-        async with sem:
-            try:
-                url = await tmdb.get_videos(c["tmdb_id"])
-                if not url and c["title"] and c["release_year"]:
-                    url = await youtube.get_trailer(c["title"], c["release_year"])
-                if url:
-                    updates.append((url, c["tmdb_id"]))
-            except Exception as e:
-                logger.warning(f"Trailer backfill failed for tmdb_id={c['tmdb_id']}: {e}")
-
-    await asyncio.gather(*[try_fetch(c) for c in candidates])
+    for c in candidates:
+        if c["title"] and c["release_year"]:
+            url = youtube.get_search_url(c["title"], c["release_year"])
+            if url:
+                updates.append((url, c["tmdb_id"]))
     db.batch_update("trailer_url", updates)
     logger.info(f"Trailer backfill complete. Updated {len(updates)} movies.")
 

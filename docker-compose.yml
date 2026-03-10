@@ -10,6 +10,7 @@ services:
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./src:/app/src
+      - ./main.py:/app/main.py
     logging:
       driver: "json-file"
       options:
