@@ -1,7 +1,14 @@
 [project]
 name = "docker-netflix-scraper"
 version = "0.1.0"
-description = "Add your description here"
+description = "Netflix AU movie scraper with TMDB, IMDb, and OpenAI embeddings"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.11"
+dependencies = [
+    "httpx",
+    "tenacity",
+    "openai",
+    "psycopg[binary]",
+    "python-dotenv",
+    "apscheduler",
+]
