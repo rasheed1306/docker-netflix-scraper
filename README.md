@@ -8,15 +8,17 @@ A containerised Python scraper that automatically fetches Netflix AU movies from
 - **Smart ingestion** — Detects cold start vs incremental mode; skips duplicate movies
 - **Rich metadata** — Pulls movie details, trailers, genres, ratings, and runtime
 - **AI embeddings** — Generates vector embeddings for semantic search (1536-dim, `text-embedding-3-small`)
-- **Fallback logic** — Uses YouTube API for trailers if TMDB has none
-- **Error resilience** — Retry logic on external APIs + Postgres transient errors; detailed logging
+- **Fallback logic** — Uses YouTube API for trailers if TMDB has none (with quota exhaustion circuit breaker)
+- **Backfill passes** — Automatically fills in missing ratings, embeddings, and trailers on every run
+- **Error resilience** — Retry logic on external APIs + Postgres transient errors; detailed logging; concurrency limits to avoid rate limits
 
 ## What Gets Created
 
 | Component | Purpose |
 |-----------|---------|
 | `main.py` | Orchestrates the full scrape: detects mode, loops pages, calls all modules |
-| `db.py` | Handles all Supabase operations: load IDs, upsert movies, write logs |
+| `db.py` | Handles all Supabase operations: load IDs, upsert movies, batch updates, write logs; consolidated functions with retry logic |
+| `youtube.py` | Fallback trailer lookup via YouTube API with circuit breaker for quota exhaustion (HTTP 403) |
 | `tmdb.py` | Fetches movie metadata from TMDB API with retries |
 | `omdb.py` | Fetches IMDb ratings |
 | `youtube.py` | Fallback trailer lookup via YouTube API |
@@ -32,12 +34,11 @@ A containerised Python scraper that automatically fetches Netflix AU movies from
 - **Cold start**: If `public.movies` is empty, fetch from 2020-01-01
 - **Incremental**: Otherwise, fetch from `MAX(added_at) - 8 days`
 
-### Null Rating Backfill Pass
-At the start of every run, before the page loop:
-1. Query all rows where `rating IS NULL` and `imdb_id IS NOT NULL`
-2. Call OMDB concurrently for all candidates
-3. Update rows where a rating is now available
-4. Skip still-NULL results — they'll be retried next week
+### Backfill Passes (Run First on Every Execution)
+Before discovering new movies, the scraper automatically fills in gaps for existing data:
+1. **Ratings backfill**: Query rows where `rating IS NULL` and `imdb_id IS NOT NULL`, call OMDB concurrently (10 at a time), batch update successful fetches
+2. **Embeddings backfill**: Query rows where `embedding IS NULL`, batch descriptions into OpenAI calls (20 per call), batch update vectors
+3. **Trailers backfill**: Query rows where `trailer_url IS NULL`, call TMDB videos first, then YouTube fallback (5 concurrent), batch update URLs
 
 ### Per-Page Pipeline (20 movies)
 1. Filter out movies already in DB (using `tmdb_id` set)
@@ -81,7 +82,7 @@ Required variables:
 - `OMDB_API_KEY` — from [OMDB API](http://www.omdbapi.com/apikey.aspx)
 - `OPENAI_API_KEY` — from [OpenAI Platform](https://platform.openai.com/api-keys)
 - `SUPABASE_DB_URL` — PostgreSQL connection string from Supabase
-- `YOUTUBE_API_KEY` — from [Google Cloud Console](https://console.cloud.google.com/) (required — many TMDB video endpoints return false data)
+- `YOUTUBE_API_KEY` — from [Google Cloud Console](https://console.cloud.google.com/) (for trailer fallback; circuit breaker prevents quota waste)
 
 ## About `uv`
 

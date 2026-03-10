@@ -6,27 +6,29 @@
 
 A Dockerised Python scraper that runs weekly, pulls Netflix AU movies from TMDB (from 2020 onwards), enriches them with IMDb ratings and OpenAI embeddings, and stores everything in Supabase. Runs on a schedule (Sunday 2 AM AEST) with immediate catch-up if more than 6 days have passed since last run.
 
-Delivery is split into two stages:
-- **Stage 1** — working scraper, `MAX_PAGES = 1`, verify data in Supabase
-- **Stage 2** — Docker, scheduler, weekly automation
+**Status**: Fully implemented with backfill passes, quota handling, and concurrency limits.
+
+Delivery was split into two stages:
+- **Stage 1** — working scraper, `MAX_PAGES = 1`, verify data in Supabase ✅
+- **Stage 2** — Docker, scheduler, weekly automation ✅
 
 ---
 
 ### File Structure
 
-| File | Purpose |
-|------|---------|
-| main.py | Orchestrates the full run: detects cold start vs incremental, loops pages, calls all modules |
-| `db.py` | All Supabase Postgres operations: load existing IDs, upsert movies, write ingestion logs. Handles transient Postgres errors with tenacity |
-| `tmdb.py` | Discover movies + fetch detail + fetch videos, with tenacity retry |
-| `omdb.py` | Fetch IMDb rating by `imdb_id`, with tenacity retry |
-| `youtube.py` | Fallback trailer lookup when TMDB videos returns nothing, with tenacity retry |
-| `embeddings.py` | Batch 20 descriptions → one OpenAI call per page |
-| `scheduler.py` | APScheduler daemon — Sunday 2 AM AEST, immediate trigger if >6 days since last run (Stage 2 only) |
-| Dockerfile | `python:3.11-slim`, installs `uv`, no secrets baked in |
-| docker-compose.yml | `restart: unless-stopped`, mounts `./src`, loads .env |
-| .env | Real secrets — never committed |
-| .env.example | Template, all five keys documented consistently, no `(REQUIRED)` markers |
+| File | Purpose | Status |
+|------|---------|--------|
+| main.py | Orchestrates the full run: detects cold start vs incremental, loops pages, calls all modules | ✅ Implemented with backfill passes |
+| `db.py` | All Supabase Postgres operations: load existing IDs, upsert movies, write ingestion logs. Handles transient Postgres errors with tenacity | ✅ Consolidated into `get_null_candidates` and `batch_update` |
+| `tmdb.py` | Discover movies + fetch detail + fetch videos, with tenacity retry | ✅ |
+| `omdb.py` | Fetch IMDb rating by `imdb_id`, with tenacity retry | ✅ |
+| `youtube.py` | Fallback trailer lookup when TMDB videos returns nothing, with tenacity retry | ✅ Added circuit breaker for YouTube quota exhaustion (HTTP 403) |
+| `embeddings.py` | Batch 20 descriptions → one OpenAI call per page | ✅ |
+| `scheduler.py` | APScheduler daemon — Sunday 2 AM AEST, immediate trigger if >6 days since last run (Stage 2 only) | ✅ |
+| Dockerfile | `python:3.11-slim`, installs `uv`, no secrets baked in | ✅ |
+| docker-compose.yml | `restart: unless-stopped`, mounts `./src`, loads .env | ✅ |
+| .env | Real secrets — never committed | ✅ |
+| .env.example | Template, all five keys documented consistently, no `(REQUIRED)` markers | ✅ |
 
 ---
 
