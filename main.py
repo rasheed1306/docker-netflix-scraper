@@ -101,16 +101,17 @@ async def process_page(page: int, min_date: Optional[str], existing_ids: set) ->
     if not enriched_movies:
         return [], 0
     
-    # Batch embed descriptions
-    descriptions = [m.get("description") or "" for m in enriched_movies]
-    try:
-        embeddings_list = embeddings.batch_embed(descriptions)
-        for movie, embedding in zip(enriched_movies, embeddings_list):
-            movie["embedding"] = embedding
-        logger.info(f"Generated embeddings for {len(enriched_movies)} movies")
-    except Exception as e:
-        logger.error(f"Error generating embeddings (skipping upsert for this page): {e}")
-        return [], 0
+    # Batch embed descriptions — skip movies with no/whitespace-only description
+    embeddable = [m for m in enriched_movies if (m.get("description") or "").strip()]
+    if embeddable:
+        try:
+            embeddings_list = embeddings.batch_embed([m["description"] for m in embeddable])
+            for movie, embedding in zip(embeddable, embeddings_list):
+                movie["embedding"] = embedding
+            logger.info(f"Generated embeddings for {len(embeddable)} movies")
+        except Exception as e:
+            logger.error(f"Error generating embeddings (skipping upsert for this page): {e}")
+            return [], 0
     
     # Upsert to database
     try:
@@ -157,10 +158,15 @@ async def backfill_embeddings() -> None:
 
     logger.info(f"Backfilling embeddings for {len(candidates)} movies...")
     updates = []
-    for i in range(0, len(candidates), 20):
-        chunk = candidates[i:i + 20]
+    # Filter out movies with no/whitespace-only description — OpenAI rejects empty inputs
+    embeddable = [c for c in candidates if (c.get("description") or "").strip()]
+    skipped = len(candidates) - len(embeddable)
+    if skipped:
+        logger.info(f"Skipping {skipped} movies with no description")
+    for i in range(0, len(embeddable), 20):
+        chunk = embeddable[i:i + 20]
         try:
-            vectors = embeddings.batch_embed([c.get("description") or "" for c in chunk])
+            vectors = embeddings.batch_embed([c["description"] for c in chunk])
             updates.extend((v, c["tmdb_id"]) for c, v in zip(chunk, vectors))
         except Exception as e:
             logger.warning(f"Embedding backfill failed for chunk at {i}: {e}")
