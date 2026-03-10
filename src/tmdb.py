@@ -5,6 +5,7 @@ Uses tenacity for retry logic on HTTP errors.
 
 import os
 import httpx
+from datetime import date
 from typing import Optional, List, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
@@ -43,6 +44,8 @@ def discover_movies(page: int, min_date: Optional[str] = None) -> List[Dict]:
         "watch_region": "AU",
         "sort_by": "primary_release_date.desc",
         "primary_release_date.gte": min_date or "2020-01-01",
+        "primary_release_date.lte": date.today().isoformat(),  # exclude future/unreleased
+        "with_release_type": "6",  # Streaming/digital releases only
         "page": page
     }
     

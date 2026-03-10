@@ -12,4 +12,5 @@ dependencies = [
     "python-dotenv",
     "apscheduler",
     "pytz",
+    "datetime>=6.0",
 ]

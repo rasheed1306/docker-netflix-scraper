@@ -46,34 +46,40 @@ async def enrich_movie(movie: Dict, existing_ids: set) -> Optional[Dict]:
             tmdb.get_detail(tmdb_id),
             tmdb.get_videos(tmdb_id)
         )
-        
-        imdb_id = detail.get("imdb_id")
-        
-        # Step 2: Fetch rating (depends on imdb_id)
-        rating = None
-        if imdb_id:
-            rating = await omdb.get_rating(imdb_id)
-        
-        # Step 2b: Fallback trailer if TMDB has none
-        trailer_url = videos
-        if not trailer_url and title and release_year:
-            trailer_url = await youtube.get_trailer(title, release_year)
-        
-        return {
-            "tmdb_id": tmdb_id,
-            "title": title,
-            "description": detail.get("overview") or "",
-            "poster_url": f"https://image.tmdb.org/t/p/w342{detail.get('poster_path')}" if detail.get("poster_path") else None,
-            "trailer_url": trailer_url,
-            "genre": detail.get("genres") or [],
-            "runtime": detail.get("runtime"),
-            "rating": rating,
-            "release_year": release_year,
-            "embedding": None,  # Will be set after batch embedding
-        }
     except Exception as e:
         logger.error(f"Error enriching movie {tmdb_id} ({title}): {e}")
         return None
+
+    imdb_id = detail.get("imdb_id")
+
+    # Step 2: Fetch rating (depends on imdb_id)
+    rating = None
+    if imdb_id:
+        try:
+            rating = await omdb.get_rating(imdb_id)
+        except Exception as e:
+            logger.warning(f"OMDB failed for {tmdb_id} ({title}): {e}")
+
+    # Step 2b: Fallback trailer if TMDB has none
+    trailer_url = videos
+    if not trailer_url and title and release_year:
+        try:
+            trailer_url = await youtube.get_trailer(title, release_year)
+        except Exception as e:
+            logger.warning(f"YouTube fallback failed for {tmdb_id} ({title}): {e}")
+
+    return {
+        "tmdb_id": tmdb_id,
+        "title": title,
+        "description": detail.get("overview") or "",
+        "poster_url": f"https://image.tmdb.org/t/p/w342{detail.get('poster_path')}" if detail.get("poster_path") else None,
+        "trailer_url": trailer_url,
+        "genre": detail.get("genres") or [],
+        "runtime": detail.get("runtime"),
+        "rating": rating,
+        "release_year": release_year,
+        "embedding": None,  # Will be set after batch embedding
+    }
 
 
 async def process_page(page: int, min_date: Optional[str], existing_ids: set) -> tuple[List[Dict], int]:
