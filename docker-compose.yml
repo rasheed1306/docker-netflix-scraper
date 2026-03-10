@@ -4,7 +4,7 @@ services:
   ingestion:
     build: .
     container_name: netflix-scraper
-    restart: unless-stopped
+    restart: on-failure
     env_file: .env
     environment:
       PYTHONUNBUFFERED: "1"

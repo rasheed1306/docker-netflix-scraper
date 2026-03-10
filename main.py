@@ -78,6 +78,7 @@ async def enrich_movie(movie: Dict, existing_ids: set) -> Optional[Dict]:
         "runtime": detail.get("runtime"),
         "rating": rating,
         "release_year": release_year,
+        "imdb_id": imdb_id,
         "embedding": None,  # Will be set after batch embedding
     }
 

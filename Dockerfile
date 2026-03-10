@@ -8,6 +8,7 @@ WORKDIR /app
 
 # Copy project files
 COPY pyproject.toml uv.lock* ./
+COPY main.py ./
 COPY src/ ./src/
 
 # Install dependencies
