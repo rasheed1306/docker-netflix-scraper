@@ -6,10 +6,13 @@ Enriches movies concurrently, upserts to Supabase.
 import asyncio
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import List, Dict, Optional
 
+from dotenv import load_dotenv
 from src import db, tmdb, omdb, youtube, embeddings
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,9 +31,9 @@ async def enrich_movie(movie: Dict, existing_ids: set) -> Optional[Dict]:
     Returns:
         Enriched movie dict or None if already exists
     """
-    tmdb_id = movie.get("id")
+    tmdb_id: int | None = movie.get("id")
     
-    if tmdb_id in existing_ids:
+    if not tmdb_id or tmdb_id in existing_ids:
         return None
     
     title = movie.get("title")
@@ -142,7 +145,10 @@ async def run_scraper():
             min_date = "2020-01-01"
         else:
             last_date = db.get_last_ingestion_date()
-            min_date = (last_date - timedelta(days=8)).strftime("%Y-%m-%d")
+            if last_date is None:
+                min_date = "2020-01-01"
+            else:
+                min_date = (last_date - timedelta(days=8)).strftime("%Y-%m-%d")
             logger.info(f"Incremental run. Discovering from {min_date}")
         
         # Load existing IDs once

@@ -5,12 +5,11 @@ Uses tenacity for retry logic on HTTP errors.
 
 import os
 import httpx
-from datetime import datetime
 from typing import Optional, List, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 
-def should_retry(exception: Exception) -> bool:
+def should_retry(exception: BaseException) -> bool:
     """Retry on HTTP 429 (rate limit) or 5xx errors."""
     if isinstance(exception, httpx.HTTPStatusError):
         return exception.response.status_code in [429, 500, 502, 503, 504]

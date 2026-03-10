@@ -6,15 +6,10 @@ Handles transient Postgres errors with tenacity retry.
 import os
 from datetime import datetime
 from typing import Set, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import psycopg
-from psycopg import sql
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4)
-)
 def get_db_connection():
     """Create and return a database connection."""
     db_url = os.getenv("SUPABASE_DB_URL")
@@ -25,7 +20,8 @@ def get_db_connection():
 
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4)
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(psycopg.OperationalError)
 )
 def is_cold_start() -> bool:
     """Check if database is empty (cold start detection)."""
@@ -38,7 +34,8 @@ def is_cold_start() -> bool:
 
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4)
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(psycopg.OperationalError)
 )
 def get_last_ingestion_date() -> Optional[datetime]:
     """Get the date of the last ingestion for incremental window calculation."""
@@ -51,7 +48,8 @@ def get_last_ingestion_date() -> Optional[datetime]:
 
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4)
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(psycopg.OperationalError)
 )
 def load_existing_tmdb_ids() -> Set[int]:
     """Load all existing TMDB IDs from database into a set."""
@@ -63,7 +61,8 @@ def load_existing_tmdb_ids() -> Set[int]:
 
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4)
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(psycopg.OperationalError)
 )
 def upsert_movies(movies: list) -> None:
     """
@@ -113,7 +112,8 @@ def upsert_movies(movies: list) -> None:
 
 @retry(
     stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=4)
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(psycopg.OperationalError)
 )
 def write_ingestion_log(status: str, movies_added: int, error: Optional[str] = None) -> None:
     """Write an ingestion log entry to track run status and progress."""

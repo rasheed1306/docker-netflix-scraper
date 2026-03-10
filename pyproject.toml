@@ -11,4 +11,5 @@ dependencies = [
     "psycopg[binary]",
     "python-dotenv",
     "apscheduler",
+    "pytz",
 ]

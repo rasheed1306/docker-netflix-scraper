@@ -25,14 +25,12 @@ def start_scheduler(run_job: Callable) -> BackgroundScheduler:
     """
     scheduler = BackgroundScheduler()
     
-    # Sunday 2 AM AEST (UTC+10) = Saturday 4 PM UTC
-    # AEST = UTC+10, so Sunday 2 AM AEST = Saturday 4 PM UTC
-    aest = pytz.timezone('Australia/Sydney')
+    # Sunday 2 AM Australia/Sydney — APScheduler handles DST automatically
     trigger = CronTrigger(
-        day_of_week=5,  # Saturday (0=Monday, 5=Saturday)
-        hour=16,        # 4 PM UTC
+        day_of_week='sun',
+        hour=2,
         minute=0,
-        timezone=pytz.UTC
+        timezone=pytz.timezone('Australia/Sydney')
     )
     
     scheduler.add_job(
