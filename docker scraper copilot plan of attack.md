@@ -131,6 +131,9 @@ POST https://api.openai.com/v1/embeddings
 SELECT COUNT(*) FROM public.movies                    -- cold start detection
 SELECT MAX(added_at) FROM public.movies               -- incremental window
 SELECT tmdb_id FROM public.movies                     -- load existing IDs into set (once)
+SELECT tmdb_id, imdb_id FROM public.movies
+  WHERE rating IS NULL AND imdb_id IS NOT NULL         -- backfill candidates
+UPDATE public.movies SET rating = $1 WHERE tmdb_id = $2  -- backfill update
 INSERT INTO public.movies ... ON CONFLICT (tmdb_id)
   DO UPDATE SET ... (embedding excluded if already set)
 INSERT INTO public.ingestion_logs ...
@@ -142,6 +145,19 @@ INSERT INTO public.ingestion_logs ...
 
 - **Cold start**: `COUNT(*) = 0` → discover from `primary_release_date.gte=2020-01-01`
 - **Incremental**: `COUNT(*) > 0` → discover from `MAX(added_at) - 8 days` (8-day buffer to catch late-indexed titles)
+
+---
+
+### Null Rating Backfill Pass (main.py — runs before page loop)
+
+At the start of every run, before the main page loop:
+
+1. Query `SELECT tmdb_id, imdb_id FROM public.movies WHERE rating IS NULL AND imdb_id IS NOT NULL`
+2. `asyncio.gather(*[omdb.get_rating(row.imdb_id) for row in candidates])` — all concurrent
+3. For each result that returns a rating: `UPDATE public.movies SET rating = $1 WHERE tmdb_id = $2`
+4. If OMDB still returns NULL, skip — the row remains a candidate and will be retried next week
+
+Uses the same tenacity retry strategy as the main enrichment path. Rows with no `imdb_id` are excluded (nothing to query against).
 
 ---
 
@@ -185,6 +201,10 @@ Postgres (`db.py`):
 ### Per-Page Data Flow
 
 ```
+0. [before page loop] backfill pass:
+     query rows WHERE rating IS NULL AND imdb_id IS NOT NULL
+     asyncio.gather(*[omdb.get_rating(imdb_id) for each])
+     UPDATE rating where returned; skip if still NULL
 1. discover page N (20 movies)
 2. filter against known tmdb_id set → new_movies
 3. asyncio.gather(*[enrich(m) for m in new_movies])

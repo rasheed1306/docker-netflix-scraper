@@ -115,6 +115,38 @@ def upsert_movies(movies: list) -> None:
     wait=wait_exponential(multiplier=1, min=1, max=4),
     retry=retry_if_exception_type(psycopg.OperationalError)
 )
+def get_null_rating_candidates() -> list[dict]:
+    """Return all movies where rating is NULL and imdb_id is known."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tmdb_id, imdb_id FROM public.movies "
+                "WHERE rating IS NULL AND imdb_id IS NOT NULL"
+            )
+            return [{"tmdb_id": row[0], "imdb_id": row[1]} for row in cur.fetchall()]
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(psycopg.OperationalError)
+)
+def update_rating(tmdb_id: int, rating: float) -> None:
+    """Update the rating for a single movie by tmdb_id."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE public.movies SET rating = %s WHERE tmdb_id = %s",
+                (rating, tmdb_id)
+            )
+            conn.commit()
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(psycopg.OperationalError)
+)
 def write_ingestion_log(status: str, movies_added: int, error: Optional[str] = None) -> None:
     """Write an ingestion log entry to track run status and progress."""
     with get_db_connection() as conn:

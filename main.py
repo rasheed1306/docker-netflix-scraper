@@ -133,6 +133,33 @@ async def process_page(page: int, min_date: Optional[str], existing_ids: set) ->
     return enriched_movies, len(enriched_movies)
 
 
+async def backfill_ratings() -> None:
+    """
+    Query all rows with rating IS NULL and a known imdb_id, call OMDB concurrently,
+    and update any rows where a rating is now available.
+    """
+    candidates = db.get_null_rating_candidates()
+    if not candidates:
+        logger.info("No null-rating candidates to backfill.")
+        return
+
+    logger.info(f"Backfilling ratings for {len(candidates)} movies...")
+
+    async def try_backfill(candidate: dict) -> None:
+        tmdb_id = candidate["tmdb_id"]
+        imdb_id = candidate["imdb_id"]
+        try:
+            rating = await omdb.get_rating(imdb_id)
+            if rating is not None:
+                db.update_rating(tmdb_id, rating)
+                logger.info(f"Backfilled rating {rating} for tmdb_id={tmdb_id}")
+        except Exception as e:
+            logger.warning(f"Backfill failed for tmdb_id={tmdb_id}: {e}")
+
+    await asyncio.gather(*[try_backfill(c) for c in candidates])
+    logger.info("Rating backfill pass complete.")
+
+
 async def run_scraper():
     """
     Main scraper orchestrator.
@@ -160,7 +187,10 @@ async def run_scraper():
         # Load existing IDs once
         existing_ids = db.load_existing_tmdb_ids()
         logger.info(f"Loaded {len(existing_ids)} existing TMDB IDs")
-        
+
+        # Backfill any movies that previously had no OMDB rating
+        await backfill_ratings()
+
         # Process pages
         for page in range(1, MAX_PAGES + 1):
             _, movies_added = await process_page(page, min_date, existing_ids)

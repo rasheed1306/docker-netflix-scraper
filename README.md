@@ -32,6 +32,13 @@ A containerised Python scraper that automatically fetches Netflix AU movies from
 - **Cold start**: If `public.movies` is empty, fetch from 2020-01-01
 - **Incremental**: Otherwise, fetch from `MAX(added_at) - 8 days`
 
+### Null Rating Backfill Pass
+At the start of every run, before the page loop:
+1. Query all rows where `rating IS NULL` and `imdb_id IS NOT NULL`
+2. Call OMDB concurrently for all candidates
+3. Update rows where a rating is now available
+4. Skip still-NULL results — they'll be retried next week
+
 ### Per-Page Pipeline (20 movies)
 1. Filter out movies already in DB (using `tmdb_id` set)
 2. Fetch details: `/movie/{id}` → `/movie/{id}/videos` → OMDB rating
@@ -140,7 +147,7 @@ uv run python -m tmdb
 ## Known Limitations
 
 - **Minor catalogue gaps**: TMDB's Netflix AU tags are community-sourced
-- **NULL ratings**: New releases may not yet be indexed in OMDB — handled gracefully
+- **NULL ratings**: New releases may not yet be indexed in OMDB — the backfill pass retries these automatically on every subsequent run
 - **NULL trailers**: Expected for some movies; UI should hide the trailer button conditionally
 - **Cold start duration**: Full fetch requires laptop to stay on (~8 hours for 500 pages)
 - **Incremental runs**: Fast (~10–15 seconds) once DB is populated
