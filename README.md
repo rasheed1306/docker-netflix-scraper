@@ -8,7 +8,7 @@ A containerised Python scraper that automatically fetches Netflix AU movies from
 - **Smart ingestion** — Detects cold start vs incremental mode; skips duplicate movies
 - **Rich metadata** — Pulls movie details, trailers, genres, ratings, and runtime
 - **AI embeddings** — Generates vector embeddings for semantic search (1536-dim, `text-embedding-3-small`)
-- **Fallback logic** — Uses YouTube API for trailers if TMDB has none (with quota exhaustion circuit breaker)
+- **Fallback logic** — Generates YouTube search URLs for trailers when TMDB has none (no API key needed, zero quota usage)
 - **Backfill passes** — Automatically fills in missing ratings, embeddings, and trailers on every run
 - **Error resilience** — Retry logic on external APIs + Postgres transient errors; detailed logging; concurrency limits to avoid rate limits
 
@@ -18,10 +18,9 @@ A containerised Python scraper that automatically fetches Netflix AU movies from
 |-----------|---------|
 | `main.py` | Orchestrates the full scrape: detects mode, loops pages, calls all modules |
 | `db.py` | Handles all Supabase operations: load IDs, upsert movies, batch updates, write logs; consolidated functions with retry logic |
-| `youtube.py` | Fallback trailer lookup via YouTube API with circuit breaker for quota exhaustion (HTTP 403) |
 | `tmdb.py` | Fetches movie metadata from TMDB API with retries |
 | `omdb.py` | Fetches IMDb ratings |
-| `youtube.py` | Fallback trailer lookup via YouTube API |
+| `youtube.py` | Generates YouTube search URLs as trailer fallback — no API call, no quota |
 | `embeddings.py` | Batches descriptions → OpenAI embeddings (20 movies per call) |
 | `scheduler.py` | APScheduler daemon: runs on schedule or immediate if >6 days since last run |
 | `Dockerfile` | Python 3.11-slim + `uv` package manager |
@@ -38,15 +37,16 @@ A containerised Python scraper that automatically fetches Netflix AU movies from
 Before discovering new movies, the scraper automatically fills in gaps for existing data:
 1. **Ratings backfill**: Query rows where `rating IS NULL` and `imdb_id IS NOT NULL`, call OMDB concurrently (10 at a time), batch update successful fetches
 2. **Embeddings backfill**: Query rows where `embedding IS NULL`, batch descriptions into OpenAI calls (20 per call), batch update vectors
-3. **Trailers backfill**: Query rows where `trailer_url IS NULL`, call TMDB videos first, then YouTube fallback (5 concurrent), batch update URLs
+3. **Trailers backfill**: Query rows where `trailer_url IS NULL`, generate YouTube search URLs directly — no API call, instant, all rows filled
 
 ### Per-Page Pipeline (20 movies)
 1. Filter out movies already in DB (using `tmdb_id` set)
-2. Fetch details: `/movie/{id}` → `/movie/{id}/videos` → OMDB rating
-3. Batch all descriptions into one OpenAI embedding call
-4. Upsert to Supabase (embeddings never overwritten on re-runs)
-5. Close DB connection, sleep 1s, reconnect
-6. Log the run (success/failed + error message)
+2. Fetch details: `/movie/{id}` → OMDB rating
+3. Generate YouTube search URL as trailer fallback
+4. Batch all descriptions into one OpenAI embedding call
+5. Upsert to Supabase (embeddings never overwritten on re-runs)
+6. Close DB connection, sleep 1s, reconnect
+7. Log the run (success/failed + error message)
 
 ## Database Schema
 

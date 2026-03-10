@@ -22,7 +22,7 @@ Delivery was split into two stages:
 | `db.py` | All Supabase Postgres operations: load existing IDs, upsert movies, write ingestion logs. Handles transient Postgres errors with tenacity | ✅ Consolidated into `get_null_candidates` and `batch_update` |
 | `tmdb.py` | Discover movies + fetch detail + fetch videos, with tenacity retry | ✅ |
 | `omdb.py` | Fetch IMDb rating by `imdb_id`, with tenacity retry | ✅ |
-| `youtube.py` | Fallback trailer lookup when TMDB videos returns nothing, with tenacity retry | ✅ Added circuit breaker for YouTube quota exhaustion (HTTP 403) |
+| `youtube.py` | Generates YouTube search URLs as trailer fallback — no API call, no quota | ✅ Replaced API with search URL generator |
 | `embeddings.py` | Batch 20 descriptions → one OpenAI call per page | ✅ |
 | `scheduler.py` | APScheduler daemon — Sunday 2 AM AEST, immediate trigger if >6 days since last run (Stage 2 only) | ✅ |
 | Dockerfile | `python:3.11-slim`, installs `uv`, no secrets baked in | ✅ |
@@ -99,9 +99,6 @@ GET /discover/movie
 
 GET /movie/{id}
   → imdb_id, runtime, genres[], poster_path, overview, release_date
-
-GET /movie/{id}/videos
-  → filter: type=Trailer, site=YouTube → take first result
 ```
 
 **OMDB**
@@ -110,15 +107,10 @@ GET http://www.omdbapi.com/?i={imdb_id}&apikey={key}
   → imdbRating
 ```
 
-**YouTube** (fallback only — when TMDB videos returns nothing)
+**YouTube** (trailer fallback — no API call)
 ```
-GET https://www.googleapis.com/youtube/v3/search
-  ?part=snippet
-  &type=video
-  &maxResults=1
-  &q={title}+{year}+official+trailer
-  &key={YOUTUBE_API_KEY}
-  → videoId → https://www.youtube.com/watch?v={videoId}
+youtube.get_search_url(title, year)
+  → https://www.youtube.com/results?search_query={title}+{year}+official+trailer
 ```
 
 **OpenAI**
@@ -174,16 +166,12 @@ await asyncio.gather(*[enrich(movie) for movie in new_movies])
 Per movie, `enrich()` runs in two steps:
 
 ```
-Step 1: detail, videos = await asyncio.gather(
-            tmdb.get_detail(id),
-            tmdb.get_videos(id)
-        )
+Step 1: detail = await tmdb.get_detail(id)
 Step 2: rating = await omdb.get_rating(detail.imdb_id)   # needs imdb_id from step 1
-        if not videos:
-            trailer = await youtube.get_trailer(title, year)  # fallback
+        trailer = youtube.get_search_url(title, year)     # sync, no API call
 ```
 
-Detail and videos fire concurrently. OMDB and YouTube are sequential within each movie since they depend on step 1 — but all 20 movies still run concurrently against each other.
+All 20 movies still run concurrently against each other.
 
 ---
 
@@ -203,20 +191,26 @@ Postgres (`db.py`):
 ### Per-Page Data Flow
 
 ```
-0. [before page loop] backfill pass:
-     query rows WHERE rating IS NULL AND imdb_id IS NOT NULL
-     asyncio.gather(*[omdb.get_rating(imdb_id) for each])
-     UPDATE rating where returned; skip if still NULL
+0. [before page loop] backfill passes:
+     ratings:   query WHERE rating IS NULL AND imdb_id IS NOT NULL
+                asyncio.gather(*[omdb.get_rating(imdb_id) for each], semaphore=10)
+                batch UPDATE rating
+     embeddings: query WHERE embedding IS NULL
+                batch_embed(descriptions, chunk=20)
+                batch UPDATE embedding
+     trailers:  query WHERE trailer_url IS NULL
+                generate youtube.get_search_url(title, year) for each — no API
+                batch UPDATE trailer_url
 1. discover page N (20 movies)
 2. filter against known tmdb_id set → new_movies
 3. asyncio.gather(*[enrich(m) for m in new_movies])
      per movie:
-       gather(tmdb_detail, tmdb_videos)
+       tmdb_detail(id)
        → omdb_rating(imdb_id)
-       → youtube_fallback() if no TMDB trailer
+       → youtube.get_search_url(title, year)  # sync, always returns a URL
 4. batch embed all descriptions → 1 OpenAI call
 5. upsert all enriched movies to public.movies
-6. sleep 1s, refresh DB connection
+6. sleep 1s
 7. after all pages: write ingestion_log (status, movies_added)
 ```
 
